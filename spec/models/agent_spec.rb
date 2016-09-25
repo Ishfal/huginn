@@ -546,6 +546,17 @@ describe Agent do
         expect(agent).to have(0).errors_on(:sources)
       end
 
+      it "should not allow target agents owned by other people" do
+        agent = Agents::SomethingSource.new(:name => "something")
+        agent.user = users(:bob)
+        agent.receiver_ids = [agents(:bob_weather_agent).id]
+        expect(agent).to have(0).errors_on(:receivers)
+        agent.receiver_ids = [agents(:jane_weather_agent).id]
+        expect(agent).to have(1).errors_on(:receivers)
+        agent.user = users(:jane)
+        expect(agent).to have(0).errors_on(:receivers)
+      end
+
       it "should not allow controller agents owned by other people" do
         agent = Agents::SomethingSource.new(:name => "something")
         agent.user = users(:bob)
@@ -736,8 +747,40 @@ describe Agent do
       end
 
       it "calls the .receive_web_request hook, updates last_web_request_at, and saves" do
-        @agent.trigger_web_request({ :some_param => "some_value" }, "post", "text/html")
+        request = ActionDispatch::Request.new({
+          'action_dispatch.request.request_parameters' => { :some_param => "some_value" },
+          'REQUEST_METHOD' => "POST",
+          'HTTP_ACCEPT' => 'text/html'
+        })
+
+        @agent.trigger_web_request(request)
         expect(@agent.reload.memory['last_request']).to eq([ { "some_param" => "some_value" }, "post", "text/html" ])
+        expect(@agent.last_web_request_at.to_i).to be_within(1).of(Time.now.to_i)
+      end
+    end
+
+    context "when .receive_web_request is defined with just request" do
+      before do
+        @agent = Agents::WebRequestReceiver.new(:name => "something")
+        @agent.user = users(:bob)
+        @agent.save!
+
+        def @agent.receive_web_request(request)
+          memory['last_request'] = [request.params, request.method_symbol.to_s, request.format, {'HTTP_X_CUSTOM_HEADER' => request.headers['HTTP_X_CUSTOM_HEADER']}]
+          ['Ok!', 200]
+        end
+      end
+
+      it "calls the .trigger_web_request with headers, and they get passed to .receive_web_request" do
+        request = ActionDispatch::Request.new({
+          'action_dispatch.request.request_parameters' => { :some_param => "some_value" },
+          'REQUEST_METHOD' => "POST",
+          'HTTP_ACCEPT' => 'text/html',
+          'HTTP_X_CUSTOM_HEADER' => "foo"
+        })
+
+        @agent.trigger_web_request(request)
+        expect(@agent.reload.memory['last_request']).to eq([ { "some_param" => "some_value" }, "post", "text/html", {'HTTP_X_CUSTOM_HEADER' => "foo"} ])
         expect(@agent.last_web_request_at.to_i).to be_within(1).of(Time.now.to_i)
       end
     end
@@ -755,8 +798,14 @@ describe Agent do
       end
 
       it "outputs a deprecation warning and calls .receive_webhook with the params" do
+        request = ActionDispatch::Request.new({
+          'action_dispatch.request.request_parameters' => { :some_param => "some_value" },
+          'REQUEST_METHOD' => "POST",
+          'HTTP_ACCEPT' => 'text/html'
+        })
+
         mock(Rails.logger).warn("DEPRECATED: The .receive_webhook method is deprecated, please switch your Agent to use .receive_web_request.")
-        @agent.trigger_web_request({ :some_param => "some_value" }, "post", "text/html")
+        @agent.trigger_web_request(request)
         expect(@agent.reload.memory['last_webhook_request']).to eq({ "some_param" => "some_value" })
         expect(@agent.last_web_request_at.to_i).to be_within(1).of(Time.now.to_i)
       end
@@ -923,6 +972,8 @@ describe AgentDrop do
     @efa.sources << @wsa1 << @wsa2
     @efa.memory[:test] = 1
     @efa.save!
+    @wsa1.reload
+    @wsa2.reload
   end
 
   it 'should be created via Agent#to_liquid' do

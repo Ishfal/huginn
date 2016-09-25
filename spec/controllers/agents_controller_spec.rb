@@ -16,6 +16,14 @@ describe AgentsController do
       get :index
       expect(assigns(:agents).all? {|i| expect(i.user).to eq(users(:bob)) }).to be_truthy
     end
+
+    it "should not show disabled agents if the cookie is set" do
+      @request.cookies["huginn_view_only_enabled_agents"] = "true"
+
+      sign_in users(:bob)
+      get :index
+      expect(assigns(:agents).map(&:disabled).uniq).to eq([false])
+    end
   end
 
   describe "POST handle_details_post" do
@@ -67,11 +75,35 @@ describe AgentsController do
     end
   end
 
+  describe "PUT toggle_visibility" do
+    it "should set the cookie" do
+      sign_in users(:jane)
+      put :toggle_visibility
+      expect(response.cookies["huginn_view_only_enabled_agents"]).to eq("true")
+    end
+
+    it "should delete the cookie" do
+      @request.cookies["huginn_view_only_enabled_agents"] = "true"
+      sign_in users(:jane)
+      put :toggle_visibility
+      expect(response.cookies["huginn_view_only_enabled_agents"]).to be_nil
+    end
+  end
+
   describe "POST propagate" do
-    it "runs event propagation for all Agents" do
+    before(:each) do
       sign_in users(:bob)
+    end
+
+    it "runs event propagation for all Agents" do
       mock.proxy(Agent).receive!
       post :propagate
+    end
+
+    it "does not run the propagation when a job is already enqueued" do
+      mock(AgentPropagateJob).can_enqueue? { false }
+      post :propagate
+      expect(flash[:notice]).to eq('Event propagation is already scheduled to run.')
     end
   end
 
@@ -171,6 +203,18 @@ describe AgentsController do
       expect(assigns(:agent)).to be_a(Agents::WebsiteAgent)
     end
 
+    it "creates Agents and accepts specifing a target agent" do
+      sign_in users(:bob)
+      attributes = valid_attributes(service_id: 1)
+      attributes[:receiver_ids] = attributes[:source_ids]
+      expect {
+        expect {
+          post :create, :agent => attributes
+        }.to change { users(:bob).agents.count }.by(1)
+      }.to change { Link.count }.by(2)
+      expect(assigns(:agent)).to be_a(Agents::WebsiteAgent)
+    end
+
     it "shows errors" do
       sign_in users(:bob)
       expect {
@@ -234,6 +278,13 @@ describe AgentsController do
       post :update, :id => agents(:bob_website_agent).to_param, :agent => valid_attributes(:name => "")
       expect(assigns(:agent)).to have(1).errors_on(:name)
       expect(response).to render_template("edit")
+    end
+
+    it 'does not allow to modify the agents user_id' do
+      sign_in users(:bob)
+      expect {
+        post :update, :id => agents(:bob_website_agent).to_param, :agent => valid_attributes(:user_id => users(:jane).id)
+      }.to raise_error(ActionController::UnpermittedParameters)
     end
 
     describe "redirecting back" do
@@ -364,52 +415,6 @@ describe AgentsController do
     end
   end
 
-  describe "POST dry_run" do
-    before do
-      stub_request(:any, /xkcd/).to_return(body: File.read(Rails.root.join("spec/data_fixtures/xkcd.html")), status: 200)
-    end
-
-    it "does not actually create any agent, event or log" do
-      sign_in users(:bob)
-      expect {
-        post :dry_run, agent: valid_attributes()
-      }.not_to change {
-        [users(:bob).agents.count, users(:bob).events.count, users(:bob).logs.count]
-      }
-      json = JSON.parse(response.body)
-      expect(json['log']).to be_a(String)
-      expect(json['events']).to be_a(String)
-      expect(JSON.parse(json['events']).map(&:class)).to eq([Hash])
-      expect(json['memory']).to be_a(String)
-      expect(JSON.parse(json['memory'])).to be_a(Hash)
-    end
-
-    it "does not actually update an agent" do
-      sign_in users(:bob)
-      agent = agents(:bob_weather_agent)
-      expect {
-        post :dry_run, id: agent, agent: valid_attributes(name: 'New Name')
-      }.not_to change {
-        [users(:bob).agents.count, users(:bob).events.count, users(:bob).logs.count, agent.name, agent.updated_at]
-      }
-    end
-
-    it "accepts an event" do
-      sign_in users(:bob)
-      agent = agents(:bob_website_agent)
-      agent.options['url_from_event'] = '{{ url }}'
-      agent.save!
-      url_from_event = "http://xkcd.com/?from_event=1".freeze
-      expect {
-        post :dry_run, id: agent, event: { url: url_from_event }
-      }.not_to change {
-        [users(:bob).agents.count, users(:bob).events.count, users(:bob).logs.count, agent.name, agent.updated_at]
-      }
-      json = JSON.parse(response.body)
-      expect(json['log']).to match(/^I, .* : Fetching #{Regexp.quote(url_from_event)}$/)
-    end
-  end
-
   describe "DELETE memory" do
     it "clears memory of the agent" do
       agent = agents(:bob_website_agent)
@@ -427,6 +432,20 @@ describe AgentsController do
         delete :destroy_memory, id: agent.to_param
       }.to raise_error(ActiveRecord::RecordNotFound)
       expect(agent.reload.memory).to eq({ "test" => 42})
+    end
+  end
+
+  describe 'DELETE undefined' do
+    it 'removes an undefined agent from the database' do
+      sign_in users(:bob)
+      agent = agents(:bob_website_agent)
+      agent.update_attribute(:type, 'Agents::UndefinedAgent')
+      agent2 = agents(:jane_website_agent)
+      agent2.update_attribute(:type, 'Agents::UndefinedAgent')
+
+      expect {
+        delete :destroy_undefined
+      }.to change { Agent.count }.by(-1)
     end
   end
 end

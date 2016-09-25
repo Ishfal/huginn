@@ -110,7 +110,7 @@ Create a user for Huginn do not type the `mysql>`, this is part of the prompt. C
 
 Ensure you can use the InnoDB engine which is necessary to support long indexes
 
-    mysql> SET storage_engine=INNODB;
+    mysql> SET default_storage_engine=INNODB;
 
     # If this fails, check your MySQL config files (e.g. `/etc/mysql/*.cnf`, `/etc/mysql/conf.d/*`)
     # for the setting "innodb = off"
@@ -134,7 +134,7 @@ You should now see `ERROR 1049 (42000): Unknown database 'huginn_production'` wh
 You are done installing the database and can go back to the rest of the installation.
 
 
-## 6. Huginn
+## 5. Huginn
 
 ### Clone the Source
 
@@ -204,6 +204,8 @@ Change the Unicorn config if needed, the [requirements.md](./requirements.md#uni
 
 **Note:** If you want to use HTTPS, which is what we recommend, see [Using HTTPS](#using-https) for the additional steps.
 
+**Note:** For configuration changes after finishing the initial installation you have to re-export (see [Install Init Script](https://github.com/cantino/huginn/blob/master/doc/manual/installation.md#install-init-script)) the init script every time you change `.env`, `unicorn.rb` or your `Procfile`!
+
 ### Install Gems
 
 **Note:** As of bundler 1.5.2, you can invoke `bundle install -jN` (where `N` the number of your processor cores) and enjoy parallel gem installation with measurable difference in completion time (~60% faster). Check the number of your cores with `nproc`. For more information check this [post](http://robots.thoughtbot.com/parallel-gem-installing-using-bundler). First make sure you have bundler >= 1.5.2 (run `bundle -v`) as it addresses some [issues](https://devcenter.heroku.com/changelog-items/411) that were [fixed](https://github.com/bundler/bundler/pull/2817) in 1.5.2.
@@ -262,7 +264,7 @@ Export the init scripts:
 
     sudo bundle exec rake production:status
 
-## 7. Nginx
+## 6. Nginx
 
 **Note:** Nginx is the officially supported web server for Huginn. If you cannot or do not want to use Nginx as your web server, the wiki has a page on how to configure [apache](https://github.com/cantino/huginn/wiki/Apache-Huginn-configuration).
 

@@ -24,16 +24,15 @@ class Agent < ActiveRecord::Base
 
   EVENT_RETENTION_SCHEDULES = [["Forever", 0], ['1 hour', 1.hour], ['6 hours', 6.hours], ["1 day", 1.day], *([2, 3, 4, 5, 7, 14, 21, 30, 45, 90, 180, 365].map {|n| ["#{n} days", n.days] })]
 
-  attr_accessible :options, :memory, :name, :type, :schedule, :controller_ids, :control_target_ids, :disabled, :source_ids, :scenario_ids, :keep_events_for, :propagate_immediately, :drop_pending_events
-
   json_serialize :options, :memory
 
   validates_presence_of :name, :user
   validates_inclusion_of :keep_events_for, :in => EVENT_RETENTION_SCHEDULES.map(&:last)
-  validate :sources_are_owned
-  validate :controllers_are_owned
-  validate :control_targets_are_owned
-  validate :scenarios_are_owned
+  validates :sources, owned_by: :user_id
+  validates :receivers, owned_by: :user_id
+  validates :controllers, owned_by: :user_id
+  validates :control_targets, owned_by: :user_id
+  validates :scenarios, owned_by: :user_id
   validate :validate_schedule
   validate :validate_options
 
@@ -100,6 +99,10 @@ class Agent < ActiveRecord::Base
     ["not implemented", 404]
   end
 
+  # alternate method signature for receive_web_request
+  # def receive_web_request(request=ActionDispatch::Request.new( ... ))
+  # end
+
   # Implement me in your subclass to decide if your Agent is working.
   def working?
     raise "Implement me in your subclass"
@@ -149,7 +152,8 @@ class Agent < ActiveRecord::Base
     end
   end
 
-  def trigger_web_request(params, method, format)
+  def trigger_web_request(request)
+    params = request.params.except(:action, :controller, :agent_id, :user_id, :format)
     if respond_to?(:receive_webhook)
       Rails.logger.warn "DEPRECATED: The .receive_webhook method is deprecated, please switch your Agent to use .receive_web_request."
       receive_webhook(params).tap do
@@ -157,7 +161,12 @@ class Agent < ActiveRecord::Base
         save!
       end
     else
-      receive_web_request(params, method, format).tap do
+      if method(:receive_web_request).arity == 1
+        handled_request = receive_web_request(request)
+      else
+        handled_request = receive_web_request(params, request.method_symbol.to_s, request.format.to_s)
+      end
+      handled_request.tap do
         self.last_web_request_at = Time.now
         save!
       end
@@ -257,22 +266,6 @@ class Agent < ActiveRecord::Base
   
   private
   
-  def sources_are_owned
-    errors.add(:sources, "must be owned by you") unless sources.all? {|s| s.user_id == user_id }
-  end
-  
-  def controllers_are_owned
-    errors.add(:controllers, "must be owned by you") unless controllers.all? {|s| s.user_id == user_id }
-  end
-
-  def control_targets_are_owned
-    errors.add(:control_targets, "must be owned by you") unless control_targets.all? {|s| s.user_id == user_id }
-  end
-
-  def scenarios_are_owned
-    errors.add(:scenarios, "must be owned by you") unless scenarios.all? {|s| s.user_id == user_id }
-  end
-
   def validate_schedule
     unless cannot_be_scheduled?
       errors.add(:schedule, "is not a valid schedule") unless SCHEDULES.include?(schedule.to_s)
