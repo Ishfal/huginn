@@ -116,7 +116,7 @@ describe ScenariosController do
     it "will not create Scenarios for other users" do
       expect {
         post :create, :scenario => valid_attributes(:user_id => users(:jane).id)
-      }.to raise_error(ActiveModel::MassAssignmentSecurity::Error)
+      }.to raise_error(ActionController::UnpermittedParameters)
     end
   end
 
@@ -138,6 +138,21 @@ describe ScenariosController do
       expect(assigns(:scenario)).to have(1).errors_on(:name)
       expect(response).to render_template("edit")
     end
+
+    it 'adds an agent to the scenario' do
+      expect {
+        post :update, :id => scenarios(:bob_weather).to_param, :scenario => { :name => "new_name", :public => "1", agent_ids: scenarios(:bob_weather).agent_ids + [agents(:bob_website_agent).id] }
+      }.to change { scenarios(:bob_weather).agent_ids.length }.by(1)
+    end
+  end
+
+  describe 'PUT enable_or_disable_all_agents' do
+    it 'updates disabled on all agents in a scenario for the current user' do
+      @params = {"scenario"=>{"disabled"=>"true"}, "commit"=>"Yes", "id"=> scenarios(:bob_weather).id}
+      put :enable_or_disable_all_agents, @params
+      expect(agents(:bob_rain_notifier_agent).disabled).to eq(true)
+      expect(response).to redirect_to(scenario_path(scenarios(:bob_weather)))
+    end
   end
 
   describe "DELETE destroy" do
@@ -149,6 +164,12 @@ describe ScenariosController do
       expect {
         delete :destroy, :id => scenarios(:jane_weather).to_param
       }.to raise_error(ActiveRecord::RecordNotFound)
+    end
+
+    it "passes the mode to the model" do
+      expect {
+        delete :destroy, id: scenarios(:bob_weather).to_param, mode: 'all_agents'
+      }.to change(Agent, :count).by(-2)
     end
   end
 end

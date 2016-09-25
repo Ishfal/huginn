@@ -3,6 +3,7 @@ module Agents
     include WebRequestConcern
 
     cannot_be_scheduled!
+    cannot_create_events!
 
     description  do
       <<-MD
@@ -24,6 +25,8 @@ module Agents
           * `template` - A JSON object representing a mapping between item output keys and incoming event values.  Use [Liquid](https://github.com/cantino/huginn/wiki/Formatting-Events-using-Liquid) to format the values.  Values of the `link`, `title`, `description` and `icon` keys will be put into the \\<channel\\> section of RSS output.  Value of the `self` key will be used as URL for this feed itself, which is useful when you serve it via reverse proxy.  The `item` key will be repeated for every Event.  The `pubDate` key for each item will have the creation time of the Event unless given.
           * `events_to_show` - The number of events to output in RSS or JSON. (default: `40`)
           * `ttl` - A value for the \\<ttl\\> element in RSS output. (default: `60`)
+          * `ns_media` - Add [yahoo media namespace](https://en.wikipedia.org/wiki/Media_RSS) in output xml
+          * `ns_itunes` - Add [itunes compatible namespace](http://lists.apple.com/archives/syndication-dev/2005/Nov/msg00002.html) in output xml
           * `push_hubs` - Set to a list of PubSubHubbub endpoints you want to publish an update to every time this agent receives an event. (default: none)  Popular hubs include [Superfeedr](https://pubsubhubbub.superfeedr.com/) and [Google](https://pubsubhubbub.appspot.com/).  Note that publishing updates will make your feed URL known to the public, so if you want to keep it secret, set up a reverse proxy to serve your feed via a safe URL and specify it in `template.self`.
 
         If you'd like to output RSS tags with attributes, such as `enclosure`, use something like the following in your `template`:
@@ -43,9 +46,14 @@ module Agents
               "_contents": "tag contents (can be an object for nesting)"
             }
 
-        # Ordering events in the output
+        # Ordering events
 
-        #{description_events_order('events in the output')}
+        #{description_events_order('events')}
+
+        DataOutputAgent will select the last `events_to_show` entries of its received events sorted in the order specified by `events_order`, which is defaulted to the event creation time.
+        So, if you have multiple source agents that may create many events in a run, you may want to either increase `events_to_show` to have a larger "window", or specify the `events_order` option to an appropriate value (like `date_published`) so events from various sources are properly mixed in the resulted feed.
+
+        There is also an option `events_list_order` that only controls the order of events listed in the final output, without attempting to maintain a total order of received events.  It has the same format as `events_order` and is defaulted to `#{Utils.jsonify(DEFAULT_EVENTS_ORDER['events_list_order'])}` so the selected events are listed in reverse order like most popular RSS feeds list their articles.
 
         # Liquid Templating
 
@@ -68,7 +76,8 @@ module Agents
             "description" => "Secret hovertext: {{hovertext}}",
             "link" => "{{url}}"
           }
-        }
+        },
+        "ns_media" => "true"
       }
     end
 
@@ -156,8 +165,73 @@ module Agents
       interpolated['template']['description'].presence || "A feed of Events received by the '#{name}' Huginn Agent"
     end
 
+    def xml_namespace
+      namespaces = ['xmlns:atom="http://www.w3.org/2005/Atom"']
+
+      if (boolify(interpolated['ns_media']))
+        namespaces << 'xmlns:media="http://search.yahoo.com/mrss/"'
+      end
+      if (boolify(interpolated['ns_itunes']))
+        namespaces << 'xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"'
+      end
+      namespaces.join(' ')
+    end
+
     def push_hubs
       interpolated['push_hubs'].presence || []
+    end
+
+    DEFAULT_EVENTS_ORDER = {
+      'events_order' => nil,
+      'events_list_order' => [["{{_index_}}", "number", true]],
+    }
+
+    def events_order(key = SortableEvents::EVENTS_ORDER_KEY)
+      super || DEFAULT_EVENTS_ORDER[key]
+    end
+
+    def latest_events(reload = false)
+      events =
+        if (event_ids = memory[:event_ids]) &&
+           memory[:events_order] == events_order &&
+           memory[:events_to_show] >= events_to_show
+          received_events.where(id: event_ids).to_a
+        else
+          memory[:last_event_id] = nil
+          reload = true
+          []
+        end
+
+      if reload
+        memory[:events_order] = events_order
+        memory[:events_to_show] = events_to_show
+
+        new_events =
+          if last_event_id = memory[:last_event_id]
+            received_events.where(Event.arel_table[:id].gt(last_event_id)).
+              order(id: :asc).to_a
+          else
+            source_ids.flat_map { |source_id|
+              # dig twice as many events as the number of
+              # `events_to_show`
+              received_events.where(agent_id: source_id).
+                last(2 * events_to_show)
+            }.sort_by(&:id)
+          end
+
+        unless new_events.empty?
+          memory[:last_event_id] = new_events.last.id
+          events.concat(new_events)
+        end
+      end
+
+      events = sort_events(events).last(events_to_show)
+
+      if reload
+        memory[:event_ids] = events.map(&:id)
+      end
+
+      events
     end
 
     def receive_web_request(params, method, format)
@@ -169,7 +243,7 @@ module Agents
         end
       end
 
-      source_events = sort_events(received_events.order(id: :desc).limit(events_to_show).to_a)
+      source_events = sort_events(latest_events(), 'events_list_order')
 
       interpolation_context.stack do
         interpolation_context['events'] = source_events
@@ -214,7 +288,7 @@ module Agents
 
           return [<<-XML, 200, 'text/xml']
 <?xml version="1.0" encoding="UTF-8" ?>
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+<rss version="2.0" #{xml_namespace}>
 <channel>
  <atom:link href=#{feed_url(secret: params['secret'], format: :xml).encode(xml: :attr)} rel="self" type="application/rss+xml" />
  <atom:icon>#{feed_icon.encode(xml: :text)}</atom:icon>
@@ -235,6 +309,9 @@ module Agents
 
     def receive(incoming_events)
       url = feed_url(secret: interpolated['secrets'].first, format: :xml)
+
+      # Reload new events and update cache
+      latest_events(true)
 
       push_hubs.each do |hub|
         push_to_hub(hub, url)

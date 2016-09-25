@@ -6,6 +6,12 @@ class ApplicationController < ActionController::Base
 
   helper :all
 
+  rescue_from 'ActiveRecord::SubclassNotFound' do
+    @undefined_agent_types = current_user.undefined_agent_types
+
+    render template: 'application/undefined_agents'
+  end
+
   def redirect_back(fallback_path, *args)
     redirect_to :back, *args
   rescue ActionController::RedirectBackError
@@ -58,6 +64,17 @@ class ApplicationController < ActionController::Base
   def basecamp_auth_check
     unless Devise.omniauth_providers.include?(:'37signals')
       @basecamp_agent = current_user.agents.where(type: 'Agents::BasecampAgent').first
+    end
+  end
+
+  def agent_params
+    return {} unless params[:agent]
+    @agent_params ||= begin
+      options = params[:agent].delete(:options) if params[:agent][:options].present?
+      params[:agent].permit(:memory, :name, :type, :schedule, :disabled, :keep_events_for, :propagate_immediately, :drop_pending_events, :service_id,
+                            source_ids: [], receiver_ids: [], scenario_ids: [], controller_ids: [], control_target_ids: []).tap do |agent_params|
+        agent_params[:options] = options if options
+      end
     end
   end
 end

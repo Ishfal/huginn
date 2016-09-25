@@ -25,6 +25,8 @@ module Agents
       You must setup an [API key for Forecast](https://developer.forecast.io/) in order to use this Agent with ForecastIO.
 
       Set `expected_update_period_in_days` to the maximum amount of time that you'd expect to pass between Events being created by this Agent.
+
+      If you want to see the returned texts in your language, then set the `language` parameter in ISO 639-1 format.
     MD
 
     event_description <<-MD
@@ -55,11 +57,11 @@ module Agents
     default_schedule "8pm"
 
     def working?
-      event_created_within?((interpolated['expected_update_period_in_days'].presence || 2).to_i) && !recent_error_logs?
+      event_created_within?((interpolated['expected_update_period_in_days'].presence || 2).to_i) && !recent_error_logs? && key_setup?
     end
 
     def key_setup?
-      interpolated['api_key'].present? && interpolated['api_key'] != "your-key"
+      interpolated['api_key'].present? && interpolated['api_key'] != "your-key" && interpolated['api_key'] != "put-your-key-here"
     end
 
     def default_options
@@ -68,10 +70,11 @@ module Agents
         'api_key' => 'your-key',
         'location' => '94103',
         'which_day' => '1',
+        'language' => 'EN',
         'expected_update_period_in_days' => '2'
       }
     end
-    
+
     def check
       if key_setup?
         create_event :payload => model(weather_provider, which_day).merge('location' => location)
@@ -79,7 +82,7 @@ module Agents
     end
 
     private
-    
+
     def weather_provider
       interpolated["service"].presence || "wunderground"
     end
@@ -92,22 +95,32 @@ module Agents
       interpolated["location"].presence || interpolated["zipcode"]
     end
 
+    def language
+      interpolated['language'].presence || 'EN'
+    end
+
     def validate_options
       errors.add(:base, "service must be set to 'forecastio' or 'wunderground'") unless ["forecastio", "wunderground"].include?(weather_provider)
       errors.add(:base, "location is required") unless location.present?
-      errors.add(:base, "api_key is required") unless key_setup?
+      errors.add(:base, "api_key is required") unless interpolated['api_key'].present?
       errors.add(:base, "which_day selection is required") unless which_day.present?
     end
 
     def wunderground
-      Wunderground.new(interpolated['api_key']).forecast_for(location)['forecast']['simpleforecast']['forecastday'] if key_setup?
+      if key_setup?
+        forecast = Wunderground.new(interpolated['api_key'], language: language.upcase).forecast_for(location)
+        merged = {}
+        forecast['forecast']['simpleforecast']['forecastday'].each { |daily| merged[daily['period']] = daily }
+        forecast['forecast']['txt_forecast']['forecastday'].each { |daily| (merged[daily['period']] || {}).merge!(daily) }
+        merged
+      end
     end
 
     def forecastio
       if key_setup?
         ForecastIO.api_key = interpolated['api_key']
         lat, lng = location.split(',')
-        ForecastIO.forecast(lat,lng)['daily']['data']
+        ForecastIO.forecast(lat, lng, params: {lang: language.downcase})['daily']['data']
       end
     end
 
