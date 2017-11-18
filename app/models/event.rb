@@ -11,7 +11,7 @@ class Event < ActiveRecord::Base
 
   json_serialize :payload
 
-  belongs_to :user
+  belongs_to :user, optional: true
   belongs_to :agent, :counter_cache => true
 
   has_many :agent_logs_as_inbound_event, :class_name => "AgentLog", :foreign_key => :inbound_event_id, :dependent => :nullify
@@ -96,7 +96,7 @@ class EventDrop
     super
   end
 
-  def before_method(key)
+  def liquid_method_missing(key)
     @payload[key]
   end
 
@@ -118,5 +118,9 @@ class EventDrop
 
   def _location_
     @object.location
+  end
+
+  def as_json
+    {location: _location_.as_json, agent: @object.agent.to_liquid.as_json, payload: @payload.as_json, created_at: created_at.as_json}
   end
 end
