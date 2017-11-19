@@ -4,9 +4,9 @@ set -ev
 docker pull $DOCKER_IMAGE
 
 if [[ $DOCKER_IMAGE =~ "cantino" ]]; then
-  docker build --build-arg OUTDATED_DOCKER_IMAGE_NAMESPACE='true' -t $DOCKER_IMAGE -f $DOCKERFILE .
+  bin/docker_wrapper build --build-arg OUTDATED_DOCKER_IMAGE_NAMESPACE='true' -t $DOCKER_IMAGE -f $DOCKERFILE .
 else
-  docker build -t $DOCKER_IMAGE -f $DOCKERFILE .
+  bin/docker_wrapper build -t $DOCKER_IMAGE -f $DOCKERFILE .
 fi
 
 if [[ -n "${DOCKER_USER}" && "${TRAVIS_PULL_REQUEST}" = 'false' && "${TRAVIS_BRANCH}" = "master" ]]; then
@@ -16,4 +16,8 @@ if [[ -n "${DOCKER_USER}" && "${TRAVIS_PULL_REQUEST}" = 'false' && "${TRAVIS_BRA
   docker push $DOCKER_IMAGE:$TRAVIS_COMMIT
 else
   echo "Docker image are only pushed for builds of the master branch when Docker Hub credentials are present."
+fi
+
+if [[ $DOCKER_IMAGE == "huginn/huginn-single-process" ]]; then
+  DOCKER_IMAGE=huginn/huginn-test DOCKERFILE=docker/test/Dockerfile ./build_docker_image.sh
 fi
