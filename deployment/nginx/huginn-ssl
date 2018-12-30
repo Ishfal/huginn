@@ -108,7 +108,8 @@ server {
   ## WARNING: If you are using relative urls remove the block below
   ## See config/application.rb under "Relative url support" for the list of
   ## other files that need to be changed for relative url support
-  location /assets/ {
+  location ~ ^/(assets)/ {
+    root /home/huginn/huginn/public;
     gzip_static on; # to serve pre-gzipped version
     expires max;
     add_header Cache-Control public;

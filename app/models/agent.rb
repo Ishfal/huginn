@@ -289,12 +289,6 @@ class Agent < ActiveRecord::Base
     end
   end
 
-  def is_positive_integer?(value)
-    Integer(value) >= 0
-  rescue
-    false
-  end
-
   # Class Methods
 
   class << self
