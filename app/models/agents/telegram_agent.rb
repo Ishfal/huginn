@@ -1,4 +1,6 @@
 require 'httmultiparty'
+require 'open-uri'
+require 'tempfile'
 
 module Agents
   class TelegramAgent < Agent
@@ -108,12 +110,28 @@ module Agents
       params
     end
 
+    def load_field(event, field)
+      payload = event.payload[field]
+      return false unless payload.present?
+      return payload if field == :text
+      load_file payload
+    end
+
+    def load_file(url)
+      file = Tempfile.new [File.basename(url), File.extname(url)]
+      file.binmode
+      file.write open(url).read
+      file.rewind
+      file
+    end
+
     def receive_event(event)
       interpolate_with event do
         messages_send = TELEGRAM_ACTIONS.count do |field, _method|
-          payload = event.payload[field]
-          next unless payload.present?
+          payload = load_field event, field
+          next unless payload
           send_telegram_messages field, configure_params(field => payload)
+          unlink_file payload if payload.is_a? Tempfile
           true
         end
         error("No valid key found in event #{event.payload.inspect}") if messages_send.zero?
@@ -150,6 +168,11 @@ module Agents
 
     def telegram_bot_uri(method)
       "https://api.telegram.org/bot#{interpolated['auth_token']}/#{method}"
+    end
+
+    def unlink_file(file)
+      file.close
+      file.unlink
     end
 
     def update_to_complete(update)

@@ -311,24 +311,6 @@ describe Agents::PostAgent do
   end
 
   describe "#working?" do
-    it "checks if there was an error" do
-      @checker.error("error")
-      expect(@checker.logs.count).to eq(1)
-      expect(@checker.reload).not_to be_working
-    end
-
-    it "checks if 'expected_receive_period_in_days' was not set" do
-      expect(@checker.logs.count).to eq(0)
-      @checker.options.delete('expected_receive_period_in_days')
-      expect(@checker).to be_working
-    end
-
-    it "checks if no event has been received" do
-      expect(@checker.logs.count).to eq(0)
-      expect(@checker.last_receive_at).to be_nil
-      expect(@checker.reload).not_to be_working
-    end
-
     it "checks if events have been received within expected receive period" do
       expect(@checker).not_to be_working
       Agents::PostAgent.async_receive @checker.id, [@event.id]
@@ -349,9 +331,9 @@ describe Agents::PostAgent do
       expect(@checker).not_to be_valid
     end
 
-    it "should validate absence of expected_receive_period_in_days is allowed" do
+    it "should validate presence of expected_receive_period_in_days" do
       @checker.options['expected_receive_period_in_days'] = ""
-      expect(@checker).to be_valid
+      expect(@checker).not_to be_valid
     end
 
     it "should validate method as post, get, put, patch, or delete, defaulting to post" do
@@ -400,17 +382,17 @@ describe Agents::PostAgent do
       @checker.options['payload'] = ""
       expect(@checker).to be_valid
 
-      @checker.options['payload'] = ["foo", "bar"]
-      expect(@checker).to be_valid
-
       @checker.options['payload'] = "hello"
+      expect(@checker).not_to be_valid
+
+      @checker.options['payload'] = ["foo", "bar"]
       expect(@checker).not_to be_valid
 
       @checker.options['payload'] = { 'this' => 'that' }
       expect(@checker).to be_valid
     end
 
-    it "should not validate payload as a hash or an array if content_type includes a MIME type and method is not get or delete" do
+    it "should not validate payload as a hash if content_type includes a MIME type and method is not get or delete" do
       @checker.options['no_merge'] = 'true'
       @checker.options['content_type'] = 'text/xml'
       @checker.options['payload'] = "test"
