@@ -215,7 +215,7 @@ describe Agents::ImapFolderAgent do
         })
 
         expect(Event.last.payload).to eq(expected_payloads.last.update(
-          'body' => "<div dir=\"ltr\">Some HTML reply<br></div>\r\n",
+          'body' => "<div dir=\"ltr\">Some HTML reply<br></div>\n",
           'matches' => { 'a' => 'some subject', 'b' => 'HTML' },
           'mime_type' => 'text/html',
         ))
@@ -308,10 +308,8 @@ describe Agents::ImapFolderAgent do
               seen[mail.uidvalidity] = mail.uid
             })
 
-          expect(Event.last(2).map(&:payload)).to match expected_payloads.map.with_index { |payload, i|
-            payload.merge(
-              'raw_mail' => satisfy { |d| Base64.decode64(d) == mails[i].encoded }
-            )
+          expect(Event.last(2).map(&:payload)).to eq expected_payloads.map.with_index { |payload, i|
+            payload.merge('raw_mail' => mails[i].encoded)
           }
 
           expect { @checker.check }.not_to change { Event.count }

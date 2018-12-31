@@ -49,7 +49,7 @@ module Agents
     end
 
     def translate_from
-      interpolated["from"].presence
+      interpolated["from"].presence || 'en'
     end
 
     def receive(incoming_events)
