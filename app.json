@@ -21,6 +21,5 @@
       "postdeploy": "bundle exec rake db:migrate"
     },
     "addons": ["heroku-postgresql"],
-    "success_url": "/users/sign_up",
-    "stack": "heroku-16"
+    "success_url": "/users/sign_up"
 }
